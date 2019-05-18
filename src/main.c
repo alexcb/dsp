@@ -70,42 +70,36 @@ int main(int argc, char *argv[])
 
 	size_t buf_len;
 	char *buf = malloc( buf_size );
+	memset( buf, 0, buf_size );
 
-	float angular_frequency1 = 0;
-	float angular_frequency2 = 0;
 
+	float tone = 500.0f;
+	float angular_frequency1 = tone * 2.0 * M_PI;
+
+	float t = 0.f;
+	float dt = 1.0f / (float)RATE;
 	while(1) {
-
-		for( int i = 0; i < 100; i++ ) {
-			float t = ((float)i) / RATE;
+		for( int i = 0; i < 1000; i++ ) {
+			t += dt;
 			float x1 = sin( t * angular_frequency1 );
-			float x2 = cos( t * angular_frequency2 );
-			int16_t xx = (x1*x2) * 32500;
+			//float x2 = cos( t * angular_frequency2 );
+			//x2 = 1.0f;
+			//int16_t xx = x1 * 32500;
+			int16_t xx = (int)(x1*1000.0); // * 32500;
 			int16_t *p = (int16_t*) (buf + i*2);
 
 			*p = xx;
-
-			//angular_frequency1 = 0.001f * (float) (rand() % 100);
-			//angular_frequency2 = 0.001f * (float) (rand() % 100);
-			angular_frequency1 += 0.1f;
-			angular_frequency2 += 0.1f;
-
-			if( angular_frequency1 > 97.f ) {
-				angular_frequency1 = 0;
-			}
-			if( angular_frequency2 > 103.f ) {
-				angular_frequency2 = 0;
-			}
 		}
-		buf_len = 100*2;
+		buf_len = 1000*2;
 		if( buf_len > 0 ) {
 			res = pa_simple_write( pa_handle, buf, buf_len, &error );
 			assert( res == 0 );
 
-			// drain
-			res = pa_simple_drain( pa_handle, &error );
-			assert( res == 0 );
 		}
 	}
+	// drain
+	res = pa_simple_drain( pa_handle, &error );
+	assert( res == 0 );
+
 	return 0;
 }
