@@ -6,8 +6,6 @@
 
 #include <dirent.h>
 
-#include "sds.h"
-#include "timing.h"
 #include "math.h"
 
 #include <sys/types.h>
@@ -219,7 +217,7 @@ int main(int argc, char *argv[])
 	int res;
 	int error;
 
-	srand( get_current_time_ms() );
+	//srand( get_current_time_ms() );
 
 	static const pa_sample_spec ss = {
 		.format = PA_SAMPLE_S16LE,
