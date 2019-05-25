@@ -32,8 +32,29 @@ int16_t *audio_buf;
 int audio_buf_i;
 int audio_buf_n;
 
+int foo_i = 0;
+float foo(float y)
+{
+	foo_i++;
+	if( foo_i > 5000 ) {
+		foo_i = 0;
+	}
+
+	if( foo_i > 2000 ) {
+		return 0.f;
+	}
+	return y;
+}
+
 void send_sample(float y)
 {
+	if( y > 1.0f ) {
+		y = 1.0f;
+		printf("clipped\n");
+	} else if( y < -1.0f ) {
+		y = -1.0f;
+		printf("clipped\n");
+	}
 	int16_t yy =  y*32500.0;
 
 	pthread_mutex_lock( &the_lock );
@@ -152,6 +173,7 @@ int main(int argc, char *argv[])
 
 		float y = (y1+y2) / 2.0f;
 
+		y = foo(y);
 		send_sample(y);
 
 		//last_y = last_y*0.9 + x1*0.1;
