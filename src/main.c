@@ -20,6 +20,9 @@
 #include <pulse/error.h>
 #include <stdio.h>
 
+// transforms
+#include "delay.h"
+
 //#define RATE 44100
 #define RATE 16000
 
@@ -32,18 +35,27 @@ int16_t *audio_buf;
 int audio_buf_i;
 int audio_buf_n;
 
-int foo_i = 0;
+
+mpg123_handle *mh;
+
+
+float last_y;
 float foo(float y)
 {
-	foo_i++;
-	if( foo_i > 5000 ) {
-		foo_i = 0;
+	if( y > last_y ) {
+		last_y = y;
+		return y*30.f;
 	}
 
-	if( foo_i > 2000 ) {
-		return 0.f;
-	}
-	return y;
+	last_y = y;
+	return y/3.f;
+}
+
+
+
+float transform_sample(float y) {
+	return transform_delay(y);
+	//return foo(y);
 }
 
 void send_sample(float y)
@@ -61,8 +73,8 @@ void send_sample(float y)
 
 	while( audio_buf_i >= audio_buf_n ) {
 		pthread_mutex_unlock( &the_lock );
-		//printf("max\n");
-		usleep(100);
+		//printf("no space\n");
+		usleep(1000);
 		pthread_mutex_lock( &the_lock );
 	}
 
@@ -79,7 +91,7 @@ void* audio_run( void *data )
 
 	pa_simple *pa_handle = (pa_simple*) data;
 
-	int min_samples = 1024*32;
+	int min_samples = 512;
 	int n = min_samples*sizeof(int16_t);
 	char* local_buf = malloc(n);
 
@@ -88,7 +100,7 @@ void* audio_run( void *data )
 
 		if( audio_buf_i < min_samples ) {
 			pthread_mutex_unlock( &the_lock );
-			usleep(100);
+			//usleep(10);
 			printf("underrun\n");
 			continue;
 		}
@@ -102,60 +114,65 @@ void* audio_run( void *data )
 		res = pa_simple_write( pa_handle, local_buf, n, &error );
 		assert( res == 0 );
 	}
+
+	// drain
+	res = pa_simple_drain( pa_handle, &error );
+	assert( res == 0 );
+
+	return NULL;
 }
 
-int main(int argc, char *argv[])
+void with_mp3(const char *path)
 {
-	int char_start;
-	int char_end;
-
-	if( argc == 1 ) {
-		char_start = 0;
-		char_end = 37;
-	} else if( argc == 3  ) {
-		char_start = atoi(argv[1]);
-		char_end = atoi(argv[2]);
-	} else {
-		fprintf(stderr, "usage: %s <char start> <char end>\n", argv[0]);
-		return 1;
-	}
-
-	if( char_end <= char_start || char_end < 0 || char_end > 37) {
-		fprintf(stderr, "<char start> must be less than <char end> (from 0 to 37)\n");
-		return 1;
-	}
-
+	int i;
 	int res;
-	int error;
+	int fd;
 
-	srand( get_current_time_ms() );
+	// mp3 decoder init
+	mpg123_init();
+	mh = mpg123_new( NULL, NULL );
+	mpg123_format_none( mh );
+	mpg123_format( mh, RATE, MPG123_MONO, MPG123_ENC_SIGNED_16 );
 
-	static const pa_sample_spec ss = {
-		.format = PA_SAMPLE_S16LE,
-		.rate = RATE,
-		.channels = 1
-	};
 
-	pa_simple *pa_handle;
-	pa_handle = pa_simple_new(NULL, "alexplayer", PA_STREAM_PLAYBACK, NULL, "playback", &ss, NULL, NULL, &error);
-	if( pa_handle == NULL ) {
-		fprintf(stderr, __FILE__": pa_simple_new() failed: %s\n", pa_strerror(error));
-		assert( 0 );
+	fd = open( path, O_RDONLY );
+	assert( fd >= 0 );
+	res = mpg123_open_fd( mh, fd );
+	assert( res == 0 );
+
+	int n = 102400;
+	char *decode_buffer = malloc(n);
+	size_t decoded_size;
+
+	for(;;) {
+		res = mpg123_read( mh, (unsigned char *)decode_buffer, n, &decoded_size);
+		switch( res ) {
+			case MPG123_OK:
+				break;
+			case MPG123_NEW_FORMAT:
+				break;
+			case MPG123_DONE:
+				goto done;
+				break;
+			default:
+				break;
+		}
+		for( i = 0; i < decoded_size; i += 2 ) {
+			uint8_t ll = ((uint8_t *)decode_buffer)[i];
+			int8_t hh = ((int8_t *)decode_buffer)[i+1];
+			float y = (hh<<8) + ll;
+			y /= 32500.0;
+			send_sample(transform_sample(y));
+		}
 	}
+done:
+	printf("done!\n");
+	assert(0);
+	return;
+}
 
-	res = pthread_mutex_init( &the_lock, NULL );
-	assert( res == 0 );
-	res = pthread_create( &audio_thread, NULL, &audio_run, (void*) pa_handle);
-	assert( res == 0 );
-
-	int max_seconds = 10;
-	size_t max_samples = RATE * max_seconds;
-	size_t buf_size = max_samples * 2;
-
-	audio_buf_i = 0;
-	audio_buf_n = buf_size;
-	audio_buf = malloc( sizeof(int16_t) * audio_buf_n );
-
+void with_sine_wave()
+{
 	float tone = 500.0f;
 	float angular_frequency1 = tone * 2.0 * M_PI;
 	tone += 12.3;
@@ -184,16 +201,59 @@ int main(int argc, char *argv[])
 		//*p = (int)(y*32500.0);
 
 	}
-	//	buf_len = 1000*2;
-	//	if( buf_len > 0 ) {
-	//		res = pa_simple_write( pa_handle, buf, buf_len, &error );
-	//		assert( res == 0 );
+}
 
-	//	}
-	//}
-	//// drain
-	//res = pa_simple_drain( pa_handle, &error );
-	//assert( res == 0 );
+int main(int argc, char *argv[])
+{
+	const char *path = NULL;
+
+	if( argc == 1 ) {
+		// pass
+	} else if( argc == 2  ) {
+		path = argv[1];
+	} else {
+		fprintf(stderr, "usage: %s <path>\n", argv[0]);
+		return 1;
+	}
+
+	int res;
+	int error;
+
+	srand( get_current_time_ms() );
+
+	static const pa_sample_spec ss = {
+		.format = PA_SAMPLE_S16LE,
+		.rate = RATE,
+		.channels = 1
+	};
+
+	pa_simple *pa_handle;
+	pa_handle = pa_simple_new(NULL, "alexplayer", PA_STREAM_PLAYBACK, NULL, "playback", &ss, NULL, NULL, &error);
+	if( pa_handle == NULL ) {
+		fprintf(stderr, __FILE__": pa_simple_new() failed: %s\n", pa_strerror(error));
+		assert( 0 );
+	}
+
+	res = pthread_mutex_init( &the_lock, NULL );
+	assert( res == 0 );
+	res = pthread_create( &audio_thread, NULL, &audio_run, (void*) pa_handle);
+	assert( res == 0 );
+
+	// init buffer space
+	int max_seconds = 10;
+	size_t max_samples = RATE * max_seconds;
+	size_t buf_size = max_samples * 2;
+
+	audio_buf_i = 0;
+	audio_buf_n = buf_size;
+	audio_buf = malloc( sizeof(int16_t) * audio_buf_n );
+
+
+	if( path ) {
+		with_mp3( path );
+	} else {
+		with_sine_wave();
+	}
 
 	return 0;
 }
