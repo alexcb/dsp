@@ -1,0 +1,10 @@
+#!/bin/bash
+out=`mktemp`
+for x in `find . -name \*.c`; do
+	clang-format-7 $x > $out
+	mv $out $x
+done;
+for x in `find . -name \*.h`; do
+	clang-format-7 $x > $out
+	mv $out $x
+done;

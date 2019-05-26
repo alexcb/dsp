@@ -1,25 +1,28 @@
+#include <assert.h>
 #include <mpg123.h>
 #include <string.h>
-#include <assert.h>
-#include <unistd.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <dirent.h>
 
 #include "math.h"
 
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <fcntl.h>
-#include <signal.h>
 #include <pthread.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
-#include <pulse/simple.h>
 #include <pulse/error.h>
+#include <pulse/simple.h>
 #include <stdio.h>
 
 // transforms
 #include "delay.h"
+#include "diff.h"
+#include "distort.h"
+#include "synth.h"
 
 //#define RATE 44100
 #define RATE 16000
@@ -33,225 +36,276 @@ int16_t *audio_buf;
 int audio_buf_i;
 int audio_buf_n;
 
-
 mpg123_handle *mh;
 
+typedef float (*transformer)(float y, void *data);
 
-float last_y;
-float foo(float y)
-{
-	if( y > last_y ) {
-		last_y = y;
-		return y*30.f;
-	}
+struct effect {
+  transformer fn;
+  void *data;
+  struct effect *next;
+};
 
-	last_y = y;
-	return y/3.f;
-}
-
-
+struct effect *root_effect;
 
 float transform_sample(float y) {
-	return transform_delay(y);
-	//return foo(y);
+  for (struct effect *p = root_effect; p != NULL; p = p->next) {
+    y = p->fn(y, p->data);
+  }
+  return y;
 }
 
-void send_sample(float y)
-{
-	if( y > 1.0f ) {
-		y = 1.0f;
-		printf("clipped\n");
-	} else if( y < -1.0f ) {
-		y = -1.0f;
-		printf("clipped\n");
-	}
-	int16_t yy =  y*32500.0;
-
-	pthread_mutex_lock( &the_lock );
-
-	while( audio_buf_i >= audio_buf_n ) {
-		pthread_mutex_unlock( &the_lock );
-		//printf("no space\n");
-		usleep(1000);
-		pthread_mutex_lock( &the_lock );
-	}
-
-	audio_buf[ audio_buf_i ] = yy;
-	audio_buf_i++;
-
-	pthread_mutex_unlock( &the_lock );
+void add_effect(transformer fn, void *data) {
+  struct effect *q;
+  struct effect *p = malloc(sizeof(struct effect));
+  p->fn = fn;
+  p->data = data;
+  p->next = NULL;
+  if (root_effect == NULL) {
+    root_effect = p;
+    return;
+  }
+  q = root_effect;
+  for (;;) {
+    if (q->next == NULL) {
+      q->next = p;
+      return;
+    }
+    q = q->next;
+  }
 }
 
-void* audio_run( void *data )
-{
-	int res;
-	int error;
+void send_sample(float y) {
+  if (y > 1.0f) {
+    y = 1.0f;
+    printf("clipped\n");
+  } else if (y < -1.0f) {
+    y = -1.0f;
+    printf("clipped\n");
+  }
+  int16_t yy = y * 32500.0;
 
-	pa_simple *pa_handle = (pa_simple*) data;
+  pthread_mutex_lock(&the_lock);
 
-	int min_samples = 512;
-	int n = min_samples*sizeof(int16_t);
-	char* local_buf = malloc(n);
+  while (audio_buf_i >= audio_buf_n) {
+    pthread_mutex_unlock(&the_lock);
+    // printf("no space\n");
+    usleep(1000);
+    pthread_mutex_lock(&the_lock);
+  }
 
-	for(;;) {
-		pthread_mutex_lock( &the_lock );
+  audio_buf[audio_buf_i] = yy;
+  audio_buf_i++;
 
-		if( audio_buf_i < min_samples ) {
-			pthread_mutex_unlock( &the_lock );
-			//usleep(10);
-			printf("underrun\n");
-			continue;
-		}
-
-		memcpy( local_buf, audio_buf, n );
-		memmove( audio_buf, ((char*)audio_buf)+n, audio_buf_i*sizeof(int16_t)-n );
-		audio_buf_i -= min_samples;
-		assert( audio_buf_i >= 0 );
-		pthread_mutex_unlock( &the_lock );
-
-		res = pa_simple_write( pa_handle, local_buf, n, &error );
-		assert( res == 0 );
-	}
-
-	// drain
-	res = pa_simple_drain( pa_handle, &error );
-	assert( res == 0 );
-
-	return NULL;
+  pthread_mutex_unlock(&the_lock);
 }
 
-void with_mp3(const char *path)
-{
-	int i;
-	int res;
-	int fd;
+void *audio_run(void *data) {
+  int res;
+  int error;
 
-	// mp3 decoder init
-	mpg123_init();
-	mh = mpg123_new( NULL, NULL );
-	mpg123_format_none( mh );
-	mpg123_format( mh, RATE, MPG123_MONO, MPG123_ENC_SIGNED_16 );
+  pa_simple *pa_handle = (pa_simple *)data;
 
+  int min_samples = 512;
+  int n = min_samples * sizeof(int16_t);
+  char *local_buf = malloc(n);
 
-	fd = open( path, O_RDONLY );
-	assert( fd >= 0 );
-	res = mpg123_open_fd( mh, fd );
-	assert( res == 0 );
+  for (;;) {
+    pthread_mutex_lock(&the_lock);
 
-	int n = 102400;
-	char *decode_buffer = malloc(n);
-	size_t decoded_size;
+    if (audio_buf_i < min_samples) {
+      pthread_mutex_unlock(&the_lock);
+      // usleep(10);
+      printf("underrun\n");
+      continue;
+    }
 
-	for(;;) {
-		res = mpg123_read( mh, (unsigned char *)decode_buffer, n, &decoded_size);
-		switch( res ) {
-			case MPG123_OK:
-				break;
-			case MPG123_NEW_FORMAT:
-				break;
-			case MPG123_DONE:
-				goto done;
-				break;
-			default:
-				break;
-		}
-		for( i = 0; i < decoded_size; i += 2 ) {
-			uint8_t ll = ((uint8_t *)decode_buffer)[i];
-			int8_t hh = ((int8_t *)decode_buffer)[i+1];
-			float y = (hh<<8) + ll;
-			y /= 32500.0;
-			send_sample(transform_sample(y));
-		}
-	}
+    memcpy(local_buf, audio_buf, n);
+    memmove(audio_buf, ((char *)audio_buf) + n,
+            audio_buf_i * sizeof(int16_t) - n);
+    audio_buf_i -= min_samples;
+    assert(audio_buf_i >= 0);
+    pthread_mutex_unlock(&the_lock);
+
+    res = pa_simple_write(pa_handle, local_buf, n, &error);
+    assert(res == 0);
+  }
+
+  // drain
+  res = pa_simple_drain(pa_handle, &error);
+  assert(res == 0);
+
+  return NULL;
+}
+
+void with_mp3(const char *path) {
+  int i;
+  int res;
+  int fd;
+
+  // mp3 decoder init
+  mpg123_init();
+  mh = mpg123_new(NULL, NULL);
+  mpg123_format_none(mh);
+  mpg123_format(mh, RATE, MPG123_MONO, MPG123_ENC_SIGNED_16);
+
+  fd = open(path, O_RDONLY);
+  assert(fd >= 0);
+  res = mpg123_open_fd(mh, fd);
+  assert(res == 0);
+
+  int n = 102400;
+  char *decode_buffer = malloc(n);
+  size_t decoded_size;
+
+  for (;;) {
+    res = mpg123_read(mh, (unsigned char *)decode_buffer, n, &decoded_size);
+    switch (res) {
+    case MPG123_OK:
+      break;
+    case MPG123_NEW_FORMAT:
+      break;
+    case MPG123_DONE:
+      goto done;
+      break;
+    default:
+      break;
+    }
+    for (i = 0; i < decoded_size; i += 2) {
+      uint8_t ll = ((uint8_t *)decode_buffer)[i];
+      int8_t hh = ((int8_t *)decode_buffer)[i + 1];
+      float y = (hh << 8) + ll;
+      y /= 32500.0;
+      send_sample(transform_sample(y));
+    }
+  }
 done:
-	printf("done!\n");
-	assert(0);
-	return;
+  printf("done!\n");
+  assert(0);
+  return;
 }
 
-void with_sine_wave()
-{
-	float tone = 500.0f;
-	float angular_frequency1 = tone * 2.0 * M_PI;
-	tone += 12.3;
-	float angular_frequency2 = tone * 2.0 * M_PI;
+void with_sine_wave() {
+  float tone = 500.0f;
+  float angular_frequency1 = tone * 2.0 * M_PI;
+  tone += 12.3;
+  float angular_frequency2 = tone * 2.0 * M_PI;
 
-	float t = 0.f;
-	float dt = 1.0f / (float)RATE;
+  float t = 0.f;
+  float dt = 1.0f / (float)RATE;
 
-	float last_y = 0;
-	float last_2y = 0;
-	while(1) {
-		t += dt;
-		float y1 = sin( t * angular_frequency1 );
-		float y2 = sin( t * angular_frequency2 );
+  float last_y = 0;
+  float last_2y = 0;
+  while (1) {
+    t += dt;
+    float y1 = sin(t * angular_frequency1);
+    float y2 = sin(t * angular_frequency2);
 
-		float y = (y1+y2) / 2.0f;
+    float y = (y1 + y2) / 2.0f;
 
-		y = foo(y);
-		send_sample(y);
-
-		//last_y = last_y*0.9 + x1*0.1;
-		//last_2y = last_y*0.99 + x2*0.01;
-
-		//int16_t *p = (int16_t*) (buf + i*2);
-
-		//*p = (int)(y*32500.0);
-
-	}
+    send_sample(transform_sample(y));
+  }
 }
 
-int main(int argc, char *argv[])
-{
-	const char *path = NULL;
-
-	if( argc == 1 ) {
-		// pass
-	} else if( argc == 2  ) {
-		path = argv[1];
-	} else {
-		fprintf(stderr, "usage: %s <path>\n", argv[0]);
-		return 1;
-	}
-
-	int res;
-	int error;
-
-	//srand( get_current_time_ms() );
-
-	static const pa_sample_spec ss = {
-		.format = PA_SAMPLE_S16LE,
-		.rate = RATE,
-		.channels = 1
-	};
-
-	pa_simple *pa_handle;
-	pa_handle = pa_simple_new(NULL, "alexplayer", PA_STREAM_PLAYBACK, NULL, "playback", &ss, NULL, NULL, &error);
-	if( pa_handle == NULL ) {
-		fprintf(stderr, __FILE__": pa_simple_new() failed: %s\n", pa_strerror(error));
-		assert( 0 );
-	}
-
-	res = pthread_mutex_init( &the_lock, NULL );
-	assert( res == 0 );
-	res = pthread_create( &audio_thread, NULL, &audio_run, (void*) pa_handle);
-	assert( res == 0 );
-
-	// init buffer space
-	int max_seconds = 10;
-	size_t max_samples = RATE * max_seconds;
-	size_t buf_size = max_samples * 2;
-
-	audio_buf_i = 0;
-	audio_buf_n = buf_size;
-	audio_buf = malloc( sizeof(int16_t) * audio_buf_n );
-
-
-	if( path ) {
-		with_mp3( path );
-	} else {
-		with_sine_wave();
-	}
-
-	return 0;
+void chain_synth(int n) {
+  struct transform_synth *synth;
+  transform_synth_init(&synth, 1.2f, RATE);
+  add_effect(transform_synth, synth);
 }
+
+void chain_delay(int n, float ratio) {
+  struct transform_delay *delay;
+  transform_delay_init(&delay, n, ratio);
+  add_effect(transform_delay, delay);
+}
+
+void chain_diff(int n) {
+  struct transform_diff *diff;
+  transform_diff_init(&diff, n);
+  add_effect(transform_diff, diff);
+}
+
+void chain_distort(float a) {
+  struct transform_distort *distort;
+  transform_distort_init(&distort, a);
+  add_effect(transform_distort, distort);
+}
+
+int main(int argc, char *argv[]) {
+  const char *path = NULL;
+
+  if (argc == 1) {
+    // pass
+  } else if (argc == 2) {
+    path = argv[1];
+  } else {
+    fprintf(stderr, "usage: %s <path>\n", argv[0]);
+    return 1;
+  }
+
+  int res;
+  int error;
+
+  // srand( get_current_time_ms() );
+
+  static const pa_sample_spec ss = {
+      .format = PA_SAMPLE_S16LE, .rate = RATE, .channels = 1};
+
+  pa_simple *pa_handle;
+  pa_handle = pa_simple_new(NULL, "alexplayer", PA_STREAM_PLAYBACK, NULL,
+                            "playback", &ss, NULL, NULL, &error);
+  if (pa_handle == NULL) {
+    fprintf(stderr, __FILE__ ": pa_simple_new() failed: %s\n",
+            pa_strerror(error));
+    assert(0);
+  }
+
+  res = pthread_mutex_init(&the_lock, NULL);
+  assert(res == 0);
+  res = pthread_create(&audio_thread, NULL, &audio_run, (void *)pa_handle);
+  assert(res == 0);
+
+  // init buffer space
+  int max_seconds = 10;
+  size_t max_samples = RATE * max_seconds;
+  size_t buf_size = max_samples * 2;
+
+  audio_buf_i = 0;
+  audio_buf_n = buf_size;
+  audio_buf = malloc(sizeof(int16_t) * audio_buf_n);
+
+  root_effect = NULL;
+  // chain together transforms
+  // for( int i = 0; i < 10; i++ ) {
+  //	chain_delay(rand() % 1000 + 10, 0.98);
+  //	chain_diff(2);
+  //}
+
+  // chain_delay(1000, 0.80);
+  // chain_delay(2900, 0.20);
+  // chain_diff(2);
+  // chain_diff(5);
+
+  // chain_distort( 50 );
+  // chain_diff(2);
+  // chain_delay(123, 0.10);
+  // chain_delay(847, 0.70);
+
+  chain_synth(1.43);
+
+  if (path) {
+    with_mp3(path);
+  } else {
+    with_sine_wave();
+  }
+
+  return 0;
+}
+
+// TODO watch
+// weird pedals for ideas: https://www.youtube.com/watch?v=lsYmvfwFmzQ
+//
+// TODO figure out the tone of the incoming signal, then play a sinewave of the
+// same freq
+//
+// TODO delay with randomized delay speeds/volumes
