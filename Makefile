@@ -10,18 +10,10 @@ LDFLAGS=-lmpg123 -lmicrohttpd -lpthread -lm -lpulse -lpulse-simple -lcurses
 SRC=$(wildcard src/**/*.c src/*.c)
 OBJ=$(SRC:%.c=%.o)
 
-TESTSRC=$(wildcard tests/**/*.c tests/*.c)
-TESTOBJ=$(TESTSRC:%.c=%.o)
-
-OBJWITHOUTMAIN := $(filter-out src/main.o,$(OBJ))
-
-build: dsp test
+build: dsp
 
 dsp: $(OBJ)
 	$(CC) $(CCFLAGS) -o dsp $^ $(LDFLAGS)
-
-test: $(OBJWITHOUTMAIN) $(TESTOBJ)
-	$(CC) $(CCFLAGS) -o test $^ $(LDFLAGS)
 
 # To obtain object files
 %.o: %.c

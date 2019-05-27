@@ -8,7 +8,7 @@
 
 #include "kiss_fft.h"
 
-#define N 102400
+#define N 1024
 
 struct transform_synth {
   kiss_fft_cfg cfg;
@@ -32,20 +32,20 @@ void transform_synth_init(struct transform_synth **p, float a, int rate) {
 }
 
 float get_max_tone(kiss_fft_cpx *out, int rate) {
-	float m = fabs(out[0].i);
-	int j = 0;
-	float y;
-	for( int i = 0; i < N/2; i++ ) {
-		//printf("%f %f\n", out[i].r, out[i].i);
-		y = out[i].r * out[i].r + out[i].i * out[i].i;
-		if( y > m ) {
-			m = y;
-			j = i;
-		}
-	}
+  float m = fabs(out[0].i);
+  int j = 0;
+  float y;
+  for (int i = 0; i < N / 2; i++) {
+    // printf("%f %f\n", out[i].r, out[i].i);
+    y = out[i].r * out[i].r + out[i].i * out[i].i;
+    if (y > m) {
+      m = y;
+      j = i;
+    }
+  }
 
-	float hz = (float)(j * rate) / (float)( N );
-	return hz;
+  float hz = (float)(j * rate) / (float)(N);
+  return hz;
 }
 
 float transform_synth(float y, void *data) {
@@ -55,17 +55,16 @@ float transform_synth(float y, void *data) {
   if (p->i == N) {
     kiss_fft(p->cfg, p->in, p->out);
     p->i = 0;
-	p->tone = get_max_tone(p->out, p->rate);
-	printf("tone: %f\n", p->tone);
+    p->tone = get_max_tone(p->out, p->rate);
+	printf("----------\n");
   } else {
     p->in[p->i].r = y;
     p->in[p->i].i = 0;
     p->i++;
   }
 
-
+  printf("tone: %f\n", p->tone);
   //return y;
   float angular_frequency = p->tone * 2.0 * M_PI;
-  //printf("%f %f\n", p->t, angular_frequency);
   return sin(p->t * angular_frequency);
 }
