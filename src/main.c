@@ -30,6 +30,10 @@
 #define MEM_SIZE 2500000
 #define MAX_BUFF_SIZE 10240
 
+#define BUF_SIZE 8
+#define READ_BUF_SIZE BUF_SIZE
+#define OUTPUT_BUF_SIZE BUF_SIZE
+
 pthread_mutex_t the_lock;
 pthread_t audio_thread;
 int16_t *audio_buf;
@@ -106,7 +110,7 @@ void *audio_run(void *data) {
 
   pa_simple *pa_handle = (pa_simple *)data;
 
-  int min_samples = 512;
+  int min_samples = OUTPUT_BUF_SIZE;
   int n = min_samples * sizeof(int16_t);
   char *local_buf = malloc(n);
 
@@ -208,6 +212,46 @@ void with_sine_wave() {
   }
 }
 
+void with_input(const pa_sample_spec *ss) {
+
+  pa_simple *s = NULL;
+  int ret = 1;
+  int error;
+
+  if (!(s = pa_simple_new(NULL, "alexplayer", PA_STREAM_RECORD, NULL, "record",
+                          ss, NULL, NULL, &error))) {
+    fprintf(stderr, __FILE__ ": pa_simple_new() failed: %s\n",
+            pa_strerror(error));
+    assert(0);
+  }
+
+  for (;;) {
+    uint8_t buf[READ_BUF_SIZE];
+
+    /* Record some data ... */
+    if (pa_simple_read(s, buf, sizeof(buf), &error) < 0) {
+      fprintf(stderr, __FILE__ ": pa_simple_read() failed: %s\n",
+              pa_strerror(error));
+      assert(0);
+    }
+
+    for (int i = 0; i < sizeof(buf); i += 2) {
+      uint8_t ll = ((uint8_t *)buf)[i];
+      int8_t hh = ((int8_t *)buf)[i + 1];
+      float y = (hh << 8) + ll;
+      y /= 32500.0;
+      // send_sample(transform_sample(y));
+      send_sample(transform_sample(y));
+    }
+
+    /* And write it to STDOUT */
+    // if (loop_write(STDOUT_FILENO, buf, sizeof(buf)) != sizeof(buf)) {
+    //    fprintf(stderr, __FILE__": write() failed: %s\n", strerror(errno));
+    //    goto finish;
+    //}
+  }
+}
+
 void chain_synth(int n) {
   struct transform_synth *synth;
   transform_synth_init(&synth, 1.2f, RATE, n);
@@ -249,7 +293,7 @@ int main(int argc, char *argv[]) {
 
   // srand( get_current_time_ms() );
 
-  static const pa_sample_spec ss = {
+  const pa_sample_spec ss = {
       .format = PA_SAMPLE_S16LE, .rate = RATE, .channels = 1};
 
   pa_simple *pa_handle;
@@ -277,25 +321,27 @@ int main(int argc, char *argv[]) {
 
   root_effect = NULL;
 
-  chain_synth(2);
+  chain_synth(1);
 
   // chain together transforms
-  for( int i = 0; i < 10; i++ ) {
-  	chain_delay(rand() % 1000 + 10, 0.80);
-  	//chain_diff(2);
+  for (int i = 0; i < 10; i++) {
+    //chain_delay(rand() % 1000 + 10, 0.50);
+    //chain_diff(2);
   }
 
-  chain_delay(1000, 0.80);
-  chain_delay(2900, 0.20);
-  chain_diff(2);
-  chain_diff(5);
+   //chain_delay(1000, 0.80);
+   //chain_delay(5000, 0.20);
+  // chain_diff(2);
+  // chain_diff(5);
 
   // chain_distort( 50 );
   // chain_diff(2);
   // chain_delay(123, 0.10);
   // chain_delay(847, 0.70);
 
-  //chain_synth(40);
+  // chain_synth(40);
+
+  with_input(&ss);
 
   if (path) {
     with_mp3(path);

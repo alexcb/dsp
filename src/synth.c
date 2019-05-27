@@ -21,7 +21,8 @@ struct transform_synth {
   kiss_fft_cfg cfg;
   kiss_fft_cpx in[N], out[N];
   int i;
-  float tone;
+  float tones[N];
+  float target_tones[N];
   float t;
   float dt;
   float rate;
@@ -32,9 +33,9 @@ struct transform_synth {
 void transform_synth_init(struct transform_synth **p, float a, int rate,
                           int keep) {
   *p = (struct transform_synth *)malloc(sizeof(struct transform_synth));
+  memset(*p, 0, sizeof(struct transform_synth));
 
   (*p)->cfg = kiss_fft_alloc(N, 0, 0, 0);
-  (*p)->tone = 0.f;
   (*p)->dt = 1.0f / (float)rate;
   (*p)->rate = rate;
   (*p)->keep = keep;
@@ -75,20 +76,34 @@ float transform_synth(float y, void *data) {
     kiss_fft(p->cfg, p->in, p->out);
     p->i = 0;
     get_max_tones(p->out, p->rate, p->sorted_tones);
+    for (int i = 0; i < p->keep; i++) {
+      p->target_tones[i] = p->sorted_tones[i].hz;
+    }
   } else {
     p->in[p->i].r = y;
     p->in[p->i].i = 0;
     p->i++;
   }
 
+  for (int i = 0; i < p->keep; i++) {
+    //float diff = p->target_tones[i] - p->tones[i];
+    //if (diff > 0.1)
+    //  diff = 0.1;
+    //if (diff < -0.1)
+    //  diff = -0.1;
+    //p->tones[i] += diff;
+	p->tones[i] = p->target_tones[i];
+  }
+
   // return y;
   float m;
   float angular_frequency;
-  y = 0.0f;
+  float yy = 0.0f;
   float mm = 0.0f;
   for (int i = 0; i < p->keep; i++) {
-    angular_frequency = p->sorted_tones[i].hz * 2.0 * M_PI;
-    y += sin(p->t * angular_frequency);
+    angular_frequency = p->tones[i] * 2.0 * M_PI;
+    yy += sin(p->t * angular_frequency);
   }
-  return y / p->keep;
+  return yy * y;
+
 }
