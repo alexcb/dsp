@@ -181,7 +181,7 @@ void with_mp3(const char *path) {
   }
 done:
   printf("done!\n");
-  assert(0);
+
   return;
 }
 
@@ -210,7 +210,7 @@ void with_sine_wave() {
 
 void chain_synth(int n) {
   struct transform_synth *synth;
-  transform_synth_init(&synth, 1.2f, RATE);
+  transform_synth_init(&synth, 1.2f, RATE, n);
   add_effect(transform_synth, synth);
 }
 
@@ -292,7 +292,7 @@ int main(int argc, char *argv[]) {
   // chain_delay(123, 0.10);
   // chain_delay(847, 0.70);
 
-  chain_synth(1.43);
+  chain_synth(40);
 
   if (path) {
     with_mp3(path);
@@ -300,6 +300,7 @@ int main(int argc, char *argv[]) {
     with_sine_wave();
   }
 
+  pthread_join(audio_thread, NULL);
   return 0;
 }
 
