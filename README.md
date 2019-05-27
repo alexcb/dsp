@@ -1,6 +1,8 @@
 ## depends
 pulseaudio devel libs
 
+https://github.com/mborgerding/kissfft comes bundled in git for easier building.
+
 ## latenct settings
 
 see http://juho.tykkala.fi/Pulseaudio-and-latency for instructions.
