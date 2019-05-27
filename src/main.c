@@ -276,23 +276,26 @@ int main(int argc, char *argv[]) {
   audio_buf = malloc(sizeof(int16_t) * audio_buf_n);
 
   root_effect = NULL;
-  // chain together transforms
-  // for( int i = 0; i < 10; i++ ) {
-  //	chain_delay(rand() % 1000 + 10, 0.98);
-  //	chain_diff(2);
-  //}
 
-  // chain_delay(1000, 0.80);
-  // chain_delay(2900, 0.20);
-  // chain_diff(2);
-  // chain_diff(5);
+  chain_synth(2);
+
+  // chain together transforms
+  for( int i = 0; i < 10; i++ ) {
+  	chain_delay(rand() % 1000 + 10, 0.80);
+  	//chain_diff(2);
+  }
+
+  chain_delay(1000, 0.80);
+  chain_delay(2900, 0.20);
+  chain_diff(2);
+  chain_diff(5);
 
   // chain_distort( 50 );
   // chain_diff(2);
   // chain_delay(123, 0.10);
   // chain_delay(847, 0.70);
 
-  chain_synth(40);
+  //chain_synth(40);
 
   if (path) {
     with_mp3(path);
