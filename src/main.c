@@ -200,6 +200,7 @@ void with_sine_wave() {
     t += dt;
     float y1 = sin(t * angular_frequency1);
     float y2 = sin(t * angular_frequency2);
+    y2 = 0;
 
     float y = (y1 + y2) / 2.0f;
 
